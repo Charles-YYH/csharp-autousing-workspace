@@ -4,7 +4,7 @@
     "description": "",
     "version": "0.0.1",
     "engines": {
-        "vscode": "^1.43.0"
+        "vscode": "^1.41.0"
     },
     "categories": [
         "Other"
@@ -16,7 +16,7 @@
     "contributes": {
         "commands": [
             {
-                "command": "extension.reindex",
+                "command": "autousing-csharp-workspace.reindex",
                 "title": "Reindex"
             }
         ]

@@ -1,16 +1,16 @@
 import * as vscode from 'vscode';
-import {readFile} from 'fs';
+import { readFile } from 'fs';
 
 const REG_CR = /\r/;
-const REG_LF = /\n/;
 
 export class AutoUsingWorkPlace
     implements vscode.CompletionItemProvider, vscode.CodeActionProvider {
-    entityNamespace: {[key: string]: string} = {};
-    entityData: {[key: string]: vscode.CompletionItem} = {};
+    entityNamespace: { [key: string]: string } = {};
+    entityData: { [key: string]: vscode.CompletionItem } = {};
     REG_USING = /using (\w.*);/gm;
 
     constructor(private readonly context: vscode.ExtensionContext) {}
+
     provideCodeActions(
         document: vscode.TextDocument,
         range: vscode.Range | vscode.Selection,
@@ -19,7 +19,18 @@ export class AutoUsingWorkPlace
     ): vscode.ProviderResult<(vscode.Command | vscode.CodeAction)[]> {
         if (context && context.diagnostics) {
             const symbols = this.getSymbols(context.diagnostics);
-            console.log(symbols);
+            if (symbols.length > 0) {
+                console.log(symbols);
+                const edit = new vscode.WorkspaceEdit();
+                symbols.forEach(symbol =>
+                    edit.insert(
+                        document.uri,
+                        new vscode.Position(0, 0),
+                        `using ${this.entityNamespace[symbol]};\n`
+                    )
+                );
+                vscode.workspace.applyEdit(edit);
+            }
         }
         return [];
     }
@@ -33,17 +44,31 @@ export class AutoUsingWorkPlace
                 r.push(result?.groups?.name as string);
             }
         });
-        return r;
+        const indexedKeys = Object.keys(this.entityData);
+        return r.filter(symbol => indexedKeys.includes(symbol));
     }
 
     start(): void {
-        const completionItem = vscode.languages.registerCompletionItemProvider('csharp', this);
-        const actionItem = vscode.languages.registerCodeActionsProvider('csharp', this);
-        const reindexCommand = vscode.commands.registerCommand('extension.reindex', () =>
-            this.reindex()
+        const completionItem = vscode.languages.registerCompletionItemProvider(
+            'csharp',
+            this
         );
-        this.context.subscriptions.push(completionItem, reindexCommand, actionItem);
-        vscode.commands.executeCommand('extension.reindex', {showOutput: true});
+        const actionItem = vscode.languages.registerCodeActionsProvider(
+            'csharp',
+            this
+        );
+        const reindexCommand = vscode.commands.registerCommand(
+            'autousing-csharp-workspace.reindex',
+            () => this.reindex()
+        );
+        this.context.subscriptions.push(
+            completionItem,
+            reindexCommand,
+            actionItem
+        );
+        vscode.commands.executeCommand('autousing-csharp-workspace.reindex', {
+            showOutput: true
+        });
     }
 
     provideCompletionItems(
@@ -52,108 +77,36 @@ export class AutoUsingWorkPlace
         token: vscode.CancellationToken,
         context: vscode.CompletionContext
     ): vscode.ProviderResult<vscode.CompletionItem[] | vscode.CompletionList> {
-        const stubCompletionItem = new vscode.CompletionItem(
-            'test',
-            vscode.CompletionItemKind.Class
+        const currentLine = document.getText(
+            new vscode.Range(position.line, 0, position.line + 1, 0)
         );
-        if (this.validPosition(document, position)) {
-            const usings = document.getText().match(this.REG_USING);
-            let excludeList: string[] = [];
-            if (usings) {
-                excludeList = usings.map(s => s.split(' ')[1]);
-            }
-            let indications: vscode.CompletionItem[] = [];
-            Object.keys(this.entityData).forEach(key => {
-                if (excludeList.some(n => n.includes(this.entityNamespace[key]))) {
-                    return;
-                }
-                indications.push(this.entityData[key]);
-            });
-            return indications;
+        if (currentLine.includes('.')) {
+            return [];
         }
-        return [stubCompletionItem];
-    }
-
-    validPosition(document: vscode.TextDocument, position: vscode.Position): boolean {
-        let line = document.lineAt(position.line);
-        let lineText = line.text;
-        if (lineText) {
-            var docText = document.getText();
-            var len = document.offsetAt(position);
-            let idx = 0;
-            enum MODE {
-                Code,
-                MultiLineComment,
-                LineComment,
-                SingleQuoteString,
-                DoubleQuoteString,
-                MultiLineString
-            }
-            let mode = MODE.Code;
-            while (idx < len) {
-                let next = docText.substr(idx, 1);
-                let next2 = docText.substr(idx, 2);
-                switch (mode) {
-                    case MODE.Code:
-                        {
-                            if (next2 == '/*') {
-                                mode = MODE.MultiLineComment;
-                                idx++;
-                            } else if (next2 == '//') {
-                                mode = MODE.LineComment;
-                                idx++;
-                            } else if (next == "'") mode = MODE.SingleQuoteString;
-                            else if (next == '"') mode = MODE.DoubleQuoteString;
-                            else if (next == '`') mode = MODE.MultiLineString;
-                        }
-                        break;
-                    case MODE.MultiLineComment:
-                        {
-                            if (next2 == '*/') {
-                                mode = MODE.Code;
-                                idx++;
-                            }
-                        }
-                        break;
-                    case MODE.LineComment:
-                        {
-                            if (next == '\n') {
-                                mode = MODE.Code;
-                            }
-                        }
-                        break;
-                    case MODE.SingleQuoteString:
-                        {
-                            if (next == "'" || next == '\n') mode = MODE.Code;
-                        }
-                        break;
-                    case MODE.DoubleQuoteString:
-                        {
-                            if (next == '"' || next == '\n') mode = MODE.Code;
-                        }
-                        break;
-                    case MODE.MultiLineString:
-                        {
-                            if (next == '`') mode = MODE.Code;
-                        }
-                        break;
-                }
-
-                idx++;
-            }
-            return mode === MODE.Code;
+        const usings = document.getText().match(this.REG_USING);
+        let excludeList: string[] = [];
+        if (usings) {
+            excludeList = usings.map(s => s.split(' ')[1]);
         }
-        return false;
+        let indications: vscode.CompletionItem[] = [];
+        Object.keys(this.entityData).forEach(key => {
+            if (excludeList.some(n => n.includes(this.entityNamespace[key]))) {
+                return;
+            }
+            indications.push(this.entityData[key]);
+        });
+        return indications;
     }
 
     reindex() {
-        vscode.window.showInformationMessage('Start indexing csharp files');
         vscode.workspace.findFiles('**/*.cs').then(files => {
             const pros = files.map(uri => this.processFile(uri));
             this.entityNamespace = {};
             this.entityData = {};
             Promise.all(pros).then(() => {
-                console.log(`Finished, ${Object.keys(this.entityData).length} symbols`);
+                console.log(
+                    `Finished, ${Object.keys(this.entityData).length} symbols`
+                );
             });
         });
     }
